@@ -1,3 +1,4 @@
+# srcディレクトリに配置する
 import pulp
 import pandas as pd
 
@@ -20,7 +21,6 @@ class ShiftScheduler:
         self.x = {}  # 各スタッフが各日にシフトに入るか否かを表す変数
         self.y_under = {}  # 各スタッフの希望勤務日数の不足数を表すスラック変数
         self.y_over = {}  # 各スタッフの希望勤務日数の超過数を表すスラック変数
-        self.z_over = {}  # 各スタッフの休暇希望の違反数を表すスラック変数
 
         # 数理モデル
         self.model = None
@@ -35,12 +35,7 @@ class ShiftScheduler:
         # 希望休暇の設定
         self.S2ng_date = {}
 
-        # 希望休暇のペナルティーの設定
-        self.penalty_off = 50
-
-    def set_data(
-        self, staff_df, calendar_df, staff_penalty, staff_ng_date, off_penalty
-    ):
+    def set_data(self, staff_df, calendar_df, staff_penalty, staff_ng_date):
         # リストの設定
         self.S = staff_df["スタッフID"].tolist()
         self.D = calendar_df["日付"].tolist()
@@ -59,11 +54,8 @@ class ShiftScheduler:
         # スタッフ希望違反のペナルティーの設定
         self.S2penalty_weight = staff_penalty
 
-        # 希望休暇の設定
+        # 休暇希望の設定
         self.S2ng_date = staff_ng_date
-
-        # 休暇希望違反のペナルティーの設定
-        self.penalty_off = off_penalty
 
     def show(self):
         print("=" * 50)
@@ -79,7 +71,7 @@ class ShiftScheduler:
         print("Date Required Leader:", self.D2required_leader)
 
         print("Staff Penalty Weight:", self.S2penalty_weight)
-        print("NG Date Penalty Weight:", self.penalty_off)
+        print("Staff NG Date:", self.S2ng_date)
         print("=" * 50)
 
     def build_model(self):
@@ -99,10 +91,6 @@ class ShiftScheduler:
         self.y_over = pulp.LpVariable.dicts(
             "y_over", self.S, cat="Continuous", lowBound=0
         )
-        # 各スタッフの休暇希望の違反数を表すためのスラック変数
-        self.z_over = pulp.LpVariable.dicts(
-            "z_over", self.S, cat="Continuous", lowBound=0
-        )
 
         ### 制約式の定義 ###
         # 各日に対して、必要な人数がシフトに入る
@@ -118,14 +106,20 @@ class ShiftScheduler:
                 >= self.D2required_leader[d]
             )
 
+        # 希望休暇の制約
+        for s in self.S:
+            if self.S2ng_date[s] != "すべてOK":
+                for d in self.D:
+                    if d == self.S2ng_date[s]:
+                        self.model += self.x[s, d] == 0
+
         ### 目的関数とスラック変数の定義 ###
-        # 各スタッフの勤務希望日数の不足数、超過数と希望休暇違反を重みペナルティを考慮して最小化する
+        # 各スタッフの勤務希望日数の不足数と超過数を、重みペナルティを考慮して最小化する
         self.model += pulp.lpSum(
             [
                 self.S2penalty_weight[s] * (self.y_under[s] + self.y_over[s])
                 for s in self.S
             ]
-            + [self.penalty_off * self.z_over[s] for s in self.S]
         )
 
         # 各スタッフに対して、y_under[s]は勤務希望日数の不足数を表す
@@ -141,13 +135,6 @@ class ShiftScheduler:
                 pulp.lpSum(self.x[s, d] for d in self.D) - self.S2max_shift[s]
                 <= self.y_over[s]
             )
-        # 各スタッフに対して、z_over[s]は休暇希望の違反数を表す
-        for s in self.S:
-            if self.S2ng_date[s] != "すべてOK":
-                self.model += (
-                    pulp.lpSum(self.x[s, d] for d in self.D if d == self.S2ng_date[s])
-                    == self.z_over[s]
-                )
 
     def solve(self):
         solver = pulp.PULP_CBC_CMD(msg=0)
@@ -165,9 +152,8 @@ if __name__ == "__main__":
     calendar_df = pd.read_csv("data/calendar.csv")
     staff_penalty = {s: 50 for s in staff_df["スタッフID"]}
     staff_ng_date = {s: "すべてOK" for s in staff_df["スタッフID"]}
-    off_penalty = 50
     shift_sch = ShiftScheduler()
-    shift_sch.set_data(staff_df, calendar_df, staff_penalty, staff_ng_date, off_penalty)
+    shift_sch.set_data(staff_df, calendar_df, staff_penalty, staff_ng_date)
     shift_sch.show()
 
     shift_sch.build_model()
