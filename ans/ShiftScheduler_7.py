@@ -1,3 +1,4 @@
+# srcディレクトリに配置する
 import pulp
 import pandas as pd
 
